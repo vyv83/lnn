@@ -156,14 +156,15 @@ class LiquidTrainer:
                 
         return total_loss / n_batches
 
-    def save_checkpoint(self, path: str, epoch: int = 0, history: list = None):
-        """Сохранить веса модели, состояние оптимизатора и историю метрик."""
+    def save_checkpoint(self, path: str, epoch: int = 0, history: list = None, metadata: dict = None):
+        """Сохранить веса модели, состояние оптимизатора, историю и метаданные."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         checkpoint = {
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'epoch': epoch,
             'history': history or [],
+            'metadata': metadata or {}
         }
         torch.save(checkpoint, path)
         logger.info(f"Чекпоинт сохранен: {path} (эпоха {epoch})")

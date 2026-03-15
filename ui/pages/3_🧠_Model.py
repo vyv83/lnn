@@ -28,6 +28,24 @@ MODEL_S1 = MODEL_DIR / "stage1.pth"
 MODEL_S2 = MODEL_DIR / "stage2.pth"
 NORM_PATH = MODEL_DIR / "normalizer.npz"
 
+# ─── Выбор данных ────────────────────────────────────────────────────────────
+available_features = [f.name for f in DATA_DIR.glob("features_*.parquet")]
+if not available_features:
+    st.warning("Нет доступных признаков. Сначала обработайте данные на странице 📥 Data.")
+    st.stop()
+
+selected_file = st.selectbox("Выберите файл признаков для обучения", available_features)
+
+# Получение реального размера файла для слайдера
+def get_parquet_row_count(path):
+    try:
+        import pyarrow.parquet as pq
+        return pq.read_metadata(path).num_rows
+    except:
+        return 1_000_000 # fallback
+
+total_rows = get_parquet_row_count(DATA_DIR / selected_file)
+
 # ─── Sidebar: Настройки ──────────────────────────────────────────────────────
 st.sidebar.header("Параметры обучения")
 m_cfg, t_cfg, _ = load_config()
@@ -44,7 +62,12 @@ rl_lr = st.sidebar.number_input("RL Learning Rate", 1e-6, 1e-2, t_cfg.phase2_lr,
 
 st.sidebar.divider()
 resume = st.sidebar.checkbox("Дообучить (Resume)", value=True, help="Загрузить последний чекпоинт перед началом (SL или RL)")
-data_limit = st.sidebar.select_slider("Data Limit (rows)", options=[50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000, 5_000_000], value=1_000_000)
+
+# Динамический слайдер лимита данных c магнитом 500к
+default_limit = min(1_000_000, total_rows)
+# Ставим min_value=0, чтобы шаги были ровными: 0, 500k, 1m...
+data_limit = st.sidebar.slider("Data Limit (rows)", 0, total_rows, default_limit, step=500_000)
+st.sidebar.caption(f"Максимум в файле: **{total_rows:,}** строк")
 
 st.sidebar.divider()
 st.sidebar.subheader("Hardware")
@@ -54,15 +77,6 @@ if torch.backends.mps.is_available():
 if torch.cuda.is_available():
     available_devices.append("cuda")
 device = st.sidebar.radio("Устройство для вычислений", available_devices, index=len(available_devices)-1)
-
-# ─── Выбор данных ────────────────────────────────────────────────────────────
-available_features = [f.name for f in DATA_DIR.glob("features_*.parquet")]
-if not available_features:
-    st.warning("Нет доступных признаков. Сначала обработайте данные на странице 📥 Data.")
-    st.stop()
-
-
-selected_file = st.selectbox("Выберите файл признаков для обучения", available_features)
 
 # ─── Тренировочный цикл ────────────────────────────────────────────────────────
 col1, col2 = st.columns([1, 2])
@@ -148,7 +162,18 @@ with col1:
                     st.session_state.losses = losses
                     s1_chart.line_chart(pd.DataFrame({"SL Loss": losses}))
                     
-                    trainer.save_checkpoint(str(MODEL_S1), epoch=epoch, history=losses)
+                    trainer.save_checkpoint(str(MODEL_S1), epoch=epoch, history=losses,
+                        metadata={
+                            "trained_samples": data_limit if len(df) > data_limit else len(df),
+                            "cfc_neurons": cfc_neurons,
+                            "cfc_motor": cfc_motor,
+                            "batch_size": batch_size,
+                            "epochs_s1": sl_epochs,
+                            "lr_s1": sl_lr,
+                            "source_file": selected_file,
+                            "dataset_start_us": int(df["timestamp_us"].iloc[0]),
+                            "dataset_end_us": int(df["timestamp_us"].iloc[-1])
+                        })
                     norm.save(str(NORM_PATH))
                 
                 duration = time.time() - start_train_time
@@ -241,7 +266,18 @@ with col1:
                     rewards.append(avg_reward)
                     st.session_state.rewards = rewards
                     s2_chart.line_chart(pd.DataFrame({"RL Reward (PnL)": rewards}))
-                    trainer.save_checkpoint(str(MODEL_S2), epoch=epoch, history=rewards)
+                    trainer.save_checkpoint(str(MODEL_S2), epoch=epoch, history=rewards,
+                    metadata={
+                        "trained_samples": data_limit if len(df) > data_limit else len(df),
+                        "cfc_neurons": cfc_neurons,
+                        "cfc_motor": cfc_motor,
+                        "batch_size": batch_size,
+                        "epochs_s2": rl_epochs,
+                        "lr_s2": rl_lr,
+                        "source_file": selected_file,
+                        "dataset_start_us": int(df["timestamp_us"].iloc[0]),
+                        "dataset_end_us": int(df["timestamp_us"].iloc[-1])
+                    })
                 
                 duration_rl = time.time() - start_train_time_rl
                 status.update(label="Stage 2 завершена!", state="complete")

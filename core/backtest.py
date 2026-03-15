@@ -40,7 +40,8 @@ class BacktestEngine:
         device: str = "cpu",
         normalizer = None,
         seq_len: int = 512,
-        conf_threshold: float = 0.5
+        conf_threshold: float = 0.5,
+        callback = None
     ) -> BacktestResult:
         """
         Прогнать бэктест на данных.
@@ -51,6 +52,7 @@ class BacktestEngine:
             normalizer: Обученный FeatureNormalizer
             seq_len: Длина последовательности (из конфига)
             conf_threshold: Порог уверенности (из конфига)
+            callback: Функция для отслеживания прогресса (step, total, phase)
         """
         model.to(device)
         model.eval()
@@ -94,6 +96,9 @@ class BacktestEngine:
                 
                 actions[i:end_idx] = act_win[0].cpu().numpy()
                 confidences[i:end_idx] = conf_win[0].cpu().numpy()
+                
+                if callback:
+                    callback(end_idx, n_steps, "Inference")
 
         logger.info("Симуляция торговой логики...")
         for t in range(1, n_steps):
@@ -127,6 +132,10 @@ class BacktestEngine:
                         confidence=conf
                     ))
                     last_pos_size = target_pos_size
+
+            # Callback раз в 10к шагов для скорости
+            if callback and t % 10000 == 0:
+                callback(t, n_steps, "Simulation")
 
             # PnL шага на основе лог-доходности для синхронизации с RL
             pnl_log = last_pos_size * (np.log(prices[t]) - np.log(prices[t-1]))
