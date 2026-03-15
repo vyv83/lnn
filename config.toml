@@ -1,0 +1,39 @@
+[data]
+exchange = "binance-futures"
+symbol = "BTCUSDT"
+data_dir = "./data/cache"
+feature_window = 500
+train_ratio = 0.8
+
+[model]
+input_size = 17
+cfc_neurons = 128
+cfc_motor = 8
+backbone_units = 64
+backbone_layers = 1
+seq_len = 512
+horizon = 100
+
+[training]
+phase1_epochs = 30
+phase1_lr = 0.0005
+phase2_epochs = 10
+phase2_lr = 0.00005
+batch_size = 1024
+
+[trading]
+commission = 0.0004
+slippage = 0.00001
+confidence_threshold = 0.5
+min_trade_delta = 0.05
+
+[walk_forward]
+train_window = 300000
+test_window = 100000
+step_size = 100000
+max_folds = 10
+
+[ui]
+refresh_interval_sec = 2
+chart_height = 400
+theme = "dark"

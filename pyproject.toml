@@ -1,0 +1,30 @@
+[project]
+name = "liquid-hawkes"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0",
+    "ncps>=0.0.7",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "plotly>=5.18",
+    "streamlit>=1.38",
+    "tardis-dev>=2.0",
+    "pytest>=7.0",
+]
+
+[project.scripts]
+liquid-ui = "ui.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "data", "ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
