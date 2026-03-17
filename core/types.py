@@ -40,6 +40,8 @@ class Trade:
     commission: float
     pnl: float
     confidence: float
+    hold_ticks: Optional[int] = None
+    hold_sec: Optional[float] = None
 
 
 @dataclass

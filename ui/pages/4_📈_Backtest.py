@@ -302,6 +302,8 @@ with st.container(border=True):
                         "Size (BTC)": f"{t.size:.4f}",
                         "Price": f"{t.price:.1f}",
                         "Comm ($)": f"{t.commission:.2f}",
+                        "Hold (s)": f"{getattr(t, 'hold_sec', 0.0):.1f}",
+                        "Hold (ticks)": getattr(t, 'hold_ticks', 0),
                         "Conf": f"{t.confidence:.2f}"
                     } for t in result.trades])
                     st.table(trades_df.tail(100))

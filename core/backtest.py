@@ -75,6 +75,8 @@ class BacktestEngine:
         balance = self.initial_balance
         last_pos_size = 0.0 # [-1, 1]
         trades = []
+        last_trade_step = 0
+        last_trade_time = timestamps[0]
         
         # Инференс батчами, но с сохранением hx для корректности CfC
         actions = np.zeros((n_steps, 1), dtype=np.float32)
@@ -121,6 +123,9 @@ class BacktestEngine:
                     comm_cost = abs(change_qty) * exec_price * self.commission
                     balance -= comm_cost
                     
+                    hold_ticks = t - last_trade_step if trades else 0
+                    hold_sec = (timestamps[t] - last_trade_time) / 1_000_000 if trades else 0.0
+
                     trades.append(Trade(
                         step=t,
                         timestamp_us=timestamps[t],
@@ -129,9 +134,13 @@ class BacktestEngine:
                         price=exec_price,
                         commission=comm_cost,
                         pnl=0.0,
-                        confidence=conf
+                        confidence=conf,
+                        hold_ticks=hold_ticks,
+                        hold_sec=hold_sec
                     ))
                     last_pos_size = target_pos_size
+                    last_trade_step = t
+                    last_trade_time = timestamps[t]
 
             # Callback раз в 10к шагов для скорости
             if callback and t % 10000 == 0:
