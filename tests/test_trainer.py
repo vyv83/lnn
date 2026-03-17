@@ -35,13 +35,15 @@ def test_dataset_output(sample_features):
     seq_len = 128
     ds = HawkesDataset(sample_features, seq_len=seq_len)
     
-    x, dt, y = ds[0]
+    x, dt, y_int, y_ret = ds[0]
     
     assert x.shape == (seq_len, len(FEATURE_COLS))
     assert dt.shape == (seq_len,)
-    assert y.shape == (seq_len, 3) # buy_trade, sell_trade, liq
+    assert y_int.shape == (seq_len, 3) 
+    assert y_ret.shape == (seq_len,)
     assert not torch.isnan(x).any()
-    assert not torch.isnan(y).any()
+    assert not torch.isnan(y_int).any()
+    assert not torch.isnan(y_ret).any()
 
 def test_trainer_sl_step(sample_features):
     """Проверка одного шага обучения SL."""

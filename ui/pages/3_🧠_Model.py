@@ -168,8 +168,8 @@ with col1:
                             "cfc_neurons": cfc_neurons,
                             "cfc_motor": cfc_motor,
                             "batch_size": batch_size,
-                            "epochs_s1": sl_epochs,
-                            "lr_s1": sl_lr,
+                            "epochs_s1": epochs,
+                            "lr_s1": lr,
                             "source_file": selected_file,
                             "dataset_start_us": int(df["timestamp_us"].iloc[0]),
                             "dataset_end_us": int(df["timestamp_us"].iloc[-1])
@@ -238,6 +238,20 @@ with col1:
                 st.write(f"📊 Подготовка данных ({len(df):,} событий)...")
                 dataset = HawkesDataset(df, seq_len=m_cfg.seq_len, normalizer=norm)
                 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+                # Настройка слоев и оптимизатора перед RL
+                if not rewards:
+                    # Первый запуск RL — полная подготовка (заморозка + новый optimizer)
+                    trainer.prepare_phase2()
+                    st.write(f"🔒 Backbone заморожен. Новый optimizer. RL LR: **{rl_lr}**")
+                else:
+                    # Resume — только заморозка, optimizer уже загружен из чекпоинта
+                    for name, param in trainer.model.named_parameters():
+                        if any(x in name for x in ["rnn_cell", "proj", "intensity_head"]):
+                            param.requires_grad = False
+                        else:
+                            param.requires_grad = True
+                    st.write(f"🔒 Backbone заморожен. Optimizer восстановлен из чекпоинта.")
 
                 st.session_state.rewards = rewards
                 if rewards:
@@ -309,12 +323,22 @@ with col2:
 # ─── Список моделей ──────────────────────────────────────────────────────────
 st.divider()
 st.subheader("💾 Сохранённые модели")
-models = list(MODEL_DIR.glob("*.pth"))
+models = sorted(list(MODEL_DIR.glob("*.pth")))
 if models:
-    df_models = pd.DataFrame([
-        {"Имя": m.name, "Размер": f"{m.stat().st_size / 1024:.1f} KB", "Дата": time.ctime(m.stat().st_mtime)}
-        for m in models
-    ])
-    st.table(df_models)
+    model_data = []
+    for m in models:
+        info = LiquidTrainer.get_checkpoint_info(str(m))
+        meta = info.get("metadata", {})
+        model_data.append({
+            "Имя": m.name,
+            "Эпох": f"{info.get('epoch', 0) + 1}",
+            "Neurons": meta.get("cfc_neurons", "N/A"),
+            "Motor": meta.get("cfc_motor", "N/A"),
+            "Batch": meta.get("batch_size", "N/A"),
+            "Источник": meta.get("source_file", "N/A"),
+            "History": f"{info.get('history_len', 0)} pts",
+            "Дата": time.strftime("%Y-%m-%d %H:%M", time.localtime(m.stat().st_mtime))
+        })
+    st.table(pd.DataFrame(model_data))
 else:
     st.info("Нет сохранённых моделей")

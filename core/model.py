@@ -23,7 +23,8 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from ncps.torch import CfC, CfCCell
+from ncps.torch import WiredCfCCell
+from ncps.wirings import AutoNCP
 
 from core.types import ModelConfig
 
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 class LiquidHawkesModel(nn.Module):
     """
     Liquid Neural Network для моделирования интенсивности потока ордеров.
+    Использует CfC (Closed-form Continuous-time) с NCP (Neural Circuit Policy) архитектурой.
+    Реализовано через WiredCfCCell + кастомный loop для стабильного broadcasting dt.
 
     Args:
         cfg: ModelConfig с гиперпараметрами (или None → defaults)
@@ -44,18 +47,18 @@ class LiquidHawkesModel(nn.Module):
             cfg = ModelConfig()
         self.cfg = cfg
 
-        # Используем CfCCell напрямую — полный контроль над timespans
-        self.rnn_cell = CfCCell(
+        # NCP Wiring: sensory -> inter -> command -> motor
+        self.wiring = AutoNCP(cfg.cfc_neurons, cfg.cfc_motor)
+        
+        # WiredCfCCell — специально для работы с NCP wiring
+        self.rnn_cell = WiredCfCCell(
             input_size=cfg.input_size,
-            hidden_size=cfg.cfc_neurons,
-            backbone_units=cfg.backbone_units,
-            backbone_layers=cfg.backbone_layers,
+            wiring=self.wiring,
         )
 
-        # Проекция из скрытого состояния cfc_neurons → cfc_motor
-        self.proj = nn.Linear(cfg.cfc_neurons, cfg.cfc_motor)
-
-        # λ_buy, λ_sell, λ_cancel — интенсивность потоков (всегда > 0)
+        # 3 головы принимают на вход выходы моторных нейронов (8 штук)
+        
+        # λ_buy, λ_sell, λ_cancel
         self.intensity_head = nn.Sequential(
             nn.Linear(cfg.cfc_motor, 16), nn.SiLU(),
             nn.Linear(16, 3), nn.Softplus(),
@@ -72,7 +75,7 @@ class LiquidHawkesModel(nn.Module):
         )
 
         logger.info(
-            "LiquidHawkesModel создана: %d параметров | CfC %d→%d нейронов",
+            "LiquidHawkesModel (AutoNCP Cell) создана: %d параметров | CfC %d нейронов, %d моторных",
             self.count_parameters(),
             cfg.cfc_neurons,
             cfg.cfc_motor,
@@ -85,44 +88,44 @@ class LiquidHawkesModel(nn.Module):
         hx: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Прямой проход.
+        Прямой проход через кастомный loop.
 
         Args:
-            x:         (batch, seq_len, input_size) — нормализованные фичи
-            timespans: (batch, seq_len) или (batch, seq_len, 1) — dt в секундах
+            x:         (batch, seq_len, input_size)
+            timespans: (batch, seq_len) или (batch, seq_len, 1)
             hx:        (batch, cfc_neurons) или None
 
         Returns:
-            intensities: (batch, seq_len, 3) — λ_buy, λ_sell, λ_cancel
-            actions:     (batch, seq_len, 1) — позиция [-1, +1]
-            confidence:  (batch, seq_len, 1) — уверенность [0, 1]
-            h_n:         (batch, cfc_neurons) — финальное скрытое состояние
+            intensities, actions, confidence, h_n (full state)
         """
         batch_size, seq_len, _ = x.shape
 
-        # Нормализуем timespans → (B, L)
         if timespans.dim() == 3:
             timespans = timespans.squeeze(-1)
 
-        # Инициализация скрытого состояния
         if hx is None:
+            # WiredCfCCell internally tracks neurons, but for AutoNCP
+            # initial state should be size of total neurons (units)
             hx = torch.zeros(batch_size, self.cfg.cfc_neurons, device=x.device)
 
         outputs = []
         h = hx
         for t in range(seq_len):
-            inp = x[:, t, :]          # (B, input_size)
-            ts = timespans[:, t].unsqueeze(-1)  # (B,) → (B, 1) ← ключ!
-            h, _ = self.rnn_cell(inp, h, ts)
-            outputs.append(self.proj(h))  # (B, cfc_motor)
+            inp = x[:, t, :]
+            ts = timespans[:, t].unsqueeze(-1) # (B, 1)
+            # WiredCfCCell.forward returns (motor_outputs, new_hidden_state)
+            # motor_outputs shape: (B, wiring.output_dim) where output_dim = cfc_motor
+            # new_hidden_state shape: (B, wiring.units) where units = cfc_neurons
+            motor_out, h = self.rnn_cell(inp, h, ts)
+            outputs.append(motor_out)
 
         # Stack → (B, L, cfc_motor)
-        cfc_out = torch.stack(outputs, dim=1)
+        motor_stack = torch.stack(outputs, dim=1)
 
         return (
-            self.intensity_head(cfc_out),
-            self.action_head(cfc_out),
-            self.confidence_head(cfc_out),
+            self.intensity_head(motor_stack),
+            self.action_head(motor_stack),
+            self.confidence_head(motor_stack),
             h,
         )
 
@@ -144,10 +147,13 @@ if __name__ == "__main__":
 
     B, L = 2, cfg.seq_len
     x = torch.randn(B, L, cfg.input_size)
-    dt = torch.rand(B, L) * 0.5 + 0.001
+    dt = torch.randn(B, L, 1) # B, L, 1
+    
+    # hx must match total neurons in AutoNCP
+    hx = torch.zeros(B, cfg.cfc_neurons)
 
     t0 = time.perf_counter()
-    intensities, actions, confidence, h_n = model(x, dt)
+    intensities, actions, confidence, h_n = model(x, dt, hx=hx)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     print(f"intensities : {intensities.shape}")
